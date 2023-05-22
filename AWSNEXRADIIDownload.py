@@ -29,52 +29,61 @@ def find_nearest_file(dataframe, datetime_column, radarsite):
     minute = str(datetime_value.minute).zfill(2)
     second = str(datetime_value.second).zfill(2)
 
-    # Check if the radarsite has changed
+    # Check if the radarsite has changed or the date has changed
     if radarsite in last_responses:
-        # Reuse the last response for the same radarsite
-        response = last_responses[radarsite]
-    else:
-        # Create a new response by listing objects in the AWS S3 bucket
-        response = s3.list_objects_v2(Bucket=s3_bucket, Prefix = f"{year}/{month}/{date}/{radarsite}/")
-        last_responses[radarsite] = response
-
-    # Check if any objects are found
-    if 'Contents' in response:
-        objects = response['Contents']
-        # Filter objects based on the specified prefix
-        filtered_objects = [obj for obj in objects if not obj['Key'].endswith('_MDM')]
-
-        if filtered_objects:
-            # Sort the filtered objects by filename datetime
-            sorted_objects = sorted(filtered_objects, key=lambda obj: obj['Key'])
-            # Find the index of the nearest file to the datetime
-            nearest_index = min(range(len(sorted_objects)), key=lambda i: abs(datetime.strptime(sorted_objects[i]['Key'][-19:-4], '%Y%m%d_%H%M%S') - datetime_value))
-            # Download the nearest file and the files one before and after it
-
-            for index in range(nearest_index - 1, nearest_index + 2):
-                if index >= 0 and index < len(sorted_objects):
-                    file_key = sorted_objects[index]['Key']
-                    # Create the local directory path to save the file
-                    local_directory = os.path.join("radar", radarsite)
-                    os.makedirs(local_directory, exist_ok=True)
-                    # Create the local file path
-                    local_path = os.path.join(local_directory, os.path.basename(file_key))
-
-                    if os.path.exists(local_path):
-                        print(f"File already exists: {os.path.basename(file_key)}")
-
-                    else:
-                        # Download the file from AWS S3
-                        download_from_s3(file_key, local_path)
-
-                    # Add a delay of 1 second between iterations
-                    #time.sleep(1)
-
+        last_date, filtered_objects, sorted_objects = last_responses[radarsite]
+        if last_date == date:
+            # Reuse the filtered and sorted objects for the same radarsite and date
+            pass
         else:
-            print("No valid files found."+radarsite+' '+year+'/'+month+'/'+date+' '+hour+':'+minute)
-
+            # Create a new response by listing objects in the AWS S3 bucket
+            response = s3.list_objects_v2(Bucket=s3_bucket, Prefix=f"{year}/{month}/{date}/{radarsite}/")
+            if 'Contents' in response:
+                objects = response['Contents']
+                filtered_objects = [obj for obj in objects if not obj['Key'].endswith('_MDM')]
+                if filtered_objects:
+                    sorted_objects = sorted(filtered_objects, key=lambda obj: obj['Key'])
+                    last_responses[radarsite] = (date, filtered_objects, sorted_objects)
+                else:
+                    print("No valid files found." + radarsite + ' ' + year + '/' + month + '/' + date + ' ' + hour + ':' + minute)
+                    return
+            else:
+                print("No objects found in S3 bucket.")
+                return
     else:
-        print("No objects found in S3 bucket.")
+        response = s3.list_objects_v2(Bucket=s3_bucket, Prefix=f"{year}/{month}/{date}/{radarsite}/")
+        if 'Contents' in response:
+            objects = response['Contents']
+            filtered_objects = [obj for obj in objects if not obj['Key'].endswith('_MDM')]
+            if filtered_objects:
+                sorted_objects = sorted(filtered_objects, key=lambda obj: obj['Key'])
+                last_responses[radarsite] = (date, filtered_objects, sorted_objects)
+            else:
+                print("No valid files found." + radarsite + ' ' + year + '/' + month + '/' + date + ' ' + hour + ':' + minute)
+                return
+        else:
+            print("No objects found in S3 bucket.")
+            return
+
+    # Find the index of the nearest file to the datetime
+    nearest_index = min(range(len(sorted_objects)), key=lambda i: abs(
+        datetime.strptime(sorted_objects[i]['Key'][-19:-4], '%Y%m%d_%H%M%S') - datetime_value))
+    # Download the nearest file and the files one before and after it
+    for index in range(nearest_index - 1, nearest_index + 2):
+        if index >= 0 and index < len(sorted_objects):
+            file_key = sorted_objects[index]['Key']
+            # Create the local directory path to save the file
+            local_directory = os.path.join("radar", radarsite)
+            os.makedirs(local_directory, exist_ok=True)
+            # Create the local file path
+            local_path = os.path.join(local_directory, os.path.basename(file_key))
+            if os.path.exists(local_path):
+                print(f"File already exists: {os.path.basename(file_key)}")
+            else:
+                # Download the file from AWS S3
+                download_from_s3(file_key, local_path)
+            # Add a delay of 1 second between iterations
+            #time.sleep(1)
 
 for _, row in df.iterrows():
     datetime_value = row['datetime']
